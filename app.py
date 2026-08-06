@@ -28,7 +28,7 @@ if uploaded_file is not None:
 
     chunks = chunk_documents(documents)
 
-    st.write("Total Chunks:", len(chunks))
+    
 
     vector_db = get_vector_store()
 
@@ -36,15 +36,18 @@ if uploaded_file is not None:
 
     st.success(f"{added} new chunks stored.")
 
-    st.write(chunks[0].metadata)
 
-    query = st.text_input("Ask a question")
+
+    query = st.chat_input("Ask anything about your document...")
 
     if query:
+
+        with st.chat_message("user"):
+            st.write(query)
+
         answer = ask_llm(query)
 
-        st.subheader("Answer")
-
-        st.write(answer)
+        with st.chat_message("assistant"):
+            st.write(answer)
 
 # How should team members join?
