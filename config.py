@@ -1,0 +1,7 @@
+TOP_K = 5
+
+CHUNK_SIZE = 1000
+
+CHUNK_OVERLAP = 200
+
+MODEL_NAME = "llama-3.3-70b-versatile"

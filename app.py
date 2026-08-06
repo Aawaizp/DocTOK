@@ -7,6 +7,9 @@ from modules.vector_store import get_vector_store
 from modules.retriever import retrieve_documents
 from modules.vector_store import store_documents
 from modules.rag_chain import ask_llm
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 st.title("📄 Doctok")
 
 uploaded_file = st.file_uploader(
@@ -36,18 +39,35 @@ if uploaded_file is not None:
 
     st.success(f"{added} new chunks stored.")
 
+    for message in st.session_state.messages:
 
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
     query = st.chat_input("Ask anything about your document...")
 
     if query:
 
-        with st.chat_message("user"):
-            st.write(query)
+        # Show user message
+        st.chat_message("user").markdown(query)
 
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": query
+            }
+        )
+
+        # Generate answer
         answer = ask_llm(query)
 
-        with st.chat_message("assistant"):
-            st.write(answer)
+        # Show assistant message
+        st.chat_message("assistant").markdown(answer)
 
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer
+            }
+        )
 # How should team members join?
