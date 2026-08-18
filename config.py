@@ -1,7 +1,18 @@
-TOP_K = 5
+import os
+from dotenv import load_dotenv
 
-CHUNK_SIZE = 1000
+load_dotenv()
 
-CHUNK_OVERLAP = 200
+MODEL_NAME = "openai/gpt-oss-120b"  
 
-MODEL_NAME = "llama-3.3-70b-versatile"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 100
+
+TOP_K = 8
+TEMPERATURE = 0.35
+
+CHROMA_PATH = "chroma_db"
+UPLOAD_DIR = "uploaded_pdfs"
+
