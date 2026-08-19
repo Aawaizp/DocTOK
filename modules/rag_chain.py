@@ -7,7 +7,6 @@ from config import MODEL_NAME, TEMPERATURE
 
 NOT_FOUND_MESSAGE = "I couldn't find that information in the uploaded documents."
 
-# Rotate across all available Groq keys instead of relying on just one.
 _API_KEYS = [
     v for k, v in os.environ.items()
     if k.startswith("GROQ_API_KEY") and v
@@ -43,45 +42,67 @@ Question:
 Answer:"""
 
 
-def ask_llm(question: str, filenames: list[str] | None = None) -> dict:
+def ask_llm_stream(question: str, filenames: list[str] | None = None):
     """
-    Retrieve relevant chunks for `question`, ask the LLM to answer
-    strictly from that context, and return the answer plus source docs.
+    Retrieve relevant chunks for `question` and stream the LLM's answer
+    token-by-token instead of waiting for the full response.
 
-    `filenames`: optional list of PDF filenames to restrict retrieval
-    to (multi-PDF selection from the UI). None/empty means search all
-    indexed documents.
+    Returns (stream_or_None, sources):
+    - If no relevant docs are found, returns (None, []) -- caller should
+      display NOT_FOUND_MESSAGE directly, no LLM call is made.
+    - Otherwise returns a generator yielding text chunks, plus the source
+      docs used for context (for citation display).
     """
     docs = retrieve_documents(question, filenames=filenames)
 
     if not docs:
-        return {"answer": NOT_FOUND_MESSAGE, "sources": []}
+        return None, []
 
     context = "\n\n".join(doc.page_content for doc in docs)
     prompt = _build_prompt(question, context)
 
     last_error = None
-    # Try each key once in case one is rate-limited or invalid.
     for _ in range(len(_API_KEYS)):
         key = next(_key_cycle)
         client = _clients[key]
         try:
-            response = client.chat.completions.create(
+            stream = client.chat.completions.create(
                 model=MODEL_NAME,
                 temperature=TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
+                stream=True,
             )
-            return {
-                "answer": response.choices[0].message.content,
-                "sources": docs,
-            }
+
+            def _token_generator(stream=stream):
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+
+            return _token_generator(), docs
+
         except RateLimitError as e:
             last_error = e
-            continue  # try next key
+            continue
         except APIStatusError as e:
-            # Auth/model errors won't be fixed by switching keys — surface immediately.
             raise RuntimeError(
                 f"Groq API error (status {e.status_code}) with model={MODEL_NAME!r}: {e.message}"
             ) from e
 
     raise RuntimeError(f"All Groq API keys rate-limited. Last error: {last_error}")
+
+
+def ask_llm(question: str, filenames: list[str] | None = None) -> dict:
+    """
+    Non-streaming convenience wrapper around ask_llm_stream, kept for any
+    callers that want the full answer as a single string (e.g. scripts,
+    tests) rather than a token stream.
+    """
+    stream, docs = ask_llm_stream(question, filenames=filenames)
+
+    if stream is None:
+        return {"answer": NOT_FOUND_MESSAGE, "sources": []}
+
+    full_answer = "".join(stream)
+
+    return {"answer": full_answer, "sources": docs}

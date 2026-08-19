@@ -1,19 +1,24 @@
 import os
 
 from groq import Groq
+from langchain_core.documents import Document
 
 from config import TOP_K, MODEL_NAME
 from modules.vector_store import get_vector_store
 
-
-# Minimum relevance score required for a chunk to be used.
-# Higher = stricter retrieval.
 SCORE_THRESHOLD = 0.35
+REWRITE_WORD_THRESHOLD = 6
+SUMMARY_K = 8
 
+DEBUG = os.getenv("DOCTOK_DEBUG", "false").lower() == "true"
 
-# Query rewriting only needs *a* working key, not the full rotation logic
-# from rag_chain.py -- grab the first available GROQ_API_KEY_* from the
-# environment.
+SUMMARY_KEYWORDS = (
+    "summarize", "summary", "key points", "main points", "main steps",
+    "overview", "main idea", "tl;dr", "what is this document about",
+    "what is this about", "steps", "outline", "table of contents",
+    "walk me through", "explain the document", "what does this cover",
+)
+
 _api_key = next(
     (v for k, v in os.environ.items() if k.startswith("GROQ_API_KEY") and v),
     None
@@ -25,54 +30,67 @@ _client = Groq(api_key=_api_key)
 
 
 def rewrite_query(question: str) -> str:
-    """
-    Rewrite a user's question into a clear search query.
-
-    If rewriting fails, use the original question.
-    """
-
+    if len(question.split()) >= REWRITE_WORD_THRESHOLD:
+        return question
     try:
         response = _client.chat.completions.create(
             model=MODEL_NAME,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Rewrite the following as a clear search query. "
-                        "Preserve the original meaning and intent. "
-                        "Do not add information. "
-                        "Return only the rewritten query.\n\n"
-                        f"Question: {question}"
-                    ),
-                }
-            ],
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Rewrite the following as a clear search query. "
+                    "Preserve the original meaning and intent. "
+                    "Do not add information. Return only the rewritten query.\n\n"
+                    f"Question: {question}"
+                ),
+            }],
         )
-
         rewritten = response.choices[0].message.content.strip()
-
         return rewritten if rewritten else question
-
     except Exception:
-        # Retrieval should still work if query rewriting fails.
         return question
 
 
 def _build_filename_filter(filenames):
-    """
-    Build a Chroma `where` filter scoping search to specific filenames.
-    Returns None if no scoping is needed (search the whole collection).
-    """
-
     if not filenames:
         return None
-
     filenames = list(filenames)
-
     if len(filenames) == 1:
         return {"filename": filenames[0]}
-
     return {"filename": {"$in": filenames}}
+
+
+def _is_summary_query(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in SUMMARY_KEYWORDS)
+
+
+def _get_summary_chunks(filenames, k=SUMMARY_K):
+    db = get_vector_store()
+    where = _build_filename_filter(filenames)
+
+    data = db.get(where=where, include=["metadatas", "documents"])
+    metadatas = data.get("metadatas") or []
+    documents = data.get("documents") or []
+
+    by_file = {}
+    for meta, text in zip(metadatas, documents):
+        fname = meta.get("filename", "unknown")
+        by_file.setdefault(fname, []).append((meta, text))
+
+    for fname in by_file:
+        by_file[fname].sort(key=lambda item: item[0].get("chunk_index", 0))
+
+    files = list(by_file.keys()) or ["unknown"]
+    per_file = max(1, k // len(files))
+
+    results = []
+    for fname in files:
+        for meta, text in by_file.get(fname, [])[:per_file]:
+            results.append(Document(page_content=text, metadata=meta))
+
+    return results
 
 
 def retrieve_documents(
@@ -81,69 +99,34 @@ def retrieve_documents(
     score_threshold: float = SCORE_THRESHOLD,
     filenames: list[str] | None = None,
 ):
-    """
-    Retrieve relevant document chunks.
-
-    Steps:
-    1. Rewrite the user's question.
-    2. Search ChromaDB using semantic similarity, optionally scoped to
-       `filenames` (metadata filter applied at the vector-search level,
-       not after the fact -- cheaper and avoids wasting the k budget on
-       chunks from PDFs the user didn't select).
-    3. Calculate relevance scores.
-    4. Remove chunks below the relevance threshold.
-    5. Return only Document objects.
-    """
-
-    # Step 1: Improve the search query
-    search_query = rewrite_query(query)
-
-    # Step 2: Get ChromaDB
-    db = get_vector_store()
-
-    # Step 3: Use configured TOP_K unless caller provides another value
     if k is None:
         k = TOP_K
 
+    if _is_summary_query(query):
+        docs = _get_summary_chunks(filenames, k=SUMMARY_K)
+        if DEBUG:
+            print(f"[retrieval:summary] {len(docs)} chunks | filter={filenames or 'ALL'}")
+        return docs
+
+    search_query = rewrite_query(query)
+    db = get_vector_store()
     where_filter = _build_filename_filter(filenames)
 
-    # Step 4: Semantic search with relevance scores, scoped by filename
     results = db.similarity_search_with_relevance_scores(
-        query=search_query,
-        k=k,
-        filter=where_filter,
+        query=search_query, k=k, filter=where_filter,
     )
 
-    # Step 5: Keep only relevant chunks
-    filtered_results = [
-        (doc, score)
-        for doc, score in results
-        if score >= score_threshold
-    ]
+    filtered_results = [(doc, score) for doc, score in results if score >= score_threshold]
 
-    # Step 6: Print scores for debugging/tuning
-    print("\n--- Retrieval Results ---")
-    print(f"Original query: {query}")
-    print(f"Search query:   {search_query}")
-    print(f"Filename filter: {filenames if filenames else 'ALL'}")
+    if DEBUG:
+        print(f"[retrieval] query={query!r} -> {search_query!r} | filter={filenames or 'ALL'} "
+              f"| {len(filtered_results)}/{len(results)} passed threshold")
+        for doc, score in filtered_results:
+            print(f"    p.{doc.metadata.get('page', 0) + 1} score={score:.3f} {doc.metadata.get('filename')}")
 
-    for doc, score in filtered_results:
-        filename = doc.metadata.get("filename", "Unknown")
-        page = doc.metadata.get("page", 0) + 1
+    if filtered_results:
+        return [doc for doc, score in filtered_results]
 
-        print(
-            f"Page {page} | "
-            f"Score: {score:.3f} | "
-            f"{filename}"
-        )
-
-    print(f"Retrieved: {len(filtered_results)} / {len(results)} chunks")
-    print("-------------------------\n")
-
-    # Important:
-    # Return only Document objects because rag_chain.py
-    # currently expects doc.page_content and doc.metadata.
-    return [
-        doc
-        for doc, score in filtered_results
-    ]
+    if DEBUG:
+        print("[retrieval] no chunks passed threshold -- falling back to summary chunks")
+    return _get_summary_chunks(filenames, k=SUMMARY_K)
