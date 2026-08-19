@@ -2,7 +2,7 @@
 
 **Ask questions across multiple PDFs, get grounded answers with citations — powered by RAG and Groq.**
 
-🔗 **Live Demo:** [https://your-app-url.streamlit.app](https://your-app-url.streamlit.app) ← replace with your deployed link
+🔗 **Live Demo:** [https://your-app-url.streamlit.app](https://doctokk.streamlit.app/) 
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B)
