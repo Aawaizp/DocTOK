@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-st.write("Secrets found:", list(st.secrets.keys()))
 
 # On Streamlit Cloud, keys live in st.secrets (dashboard-configured), not a
 # .env file. Mirror them into os.environ before importing any module that
