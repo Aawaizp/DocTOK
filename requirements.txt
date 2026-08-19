@@ -3,6 +3,7 @@ groq
 langchain-core
 langchain-chroma
 langchain-huggingface
+langchain-community
 chromadb
 sentence-transformers
 pypdf
