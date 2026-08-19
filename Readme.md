@@ -26,8 +26,9 @@ DocTOK is a Retrieval-Augmented Generation (RAG) chat app that lets you upload o
 
 ## 🖥️ Screenshot
 
-> _Add a screenshot or GIF of the app here before sharing._
-
+> ![alt text](image.png)
+> ![alt text](image-1.png)
+> ![alt text](image-2.png)
 ---
 
 ## 🏗️ How it works
